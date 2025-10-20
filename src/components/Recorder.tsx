@@ -36,8 +36,8 @@ export default function Recorder(): JSX.Element {
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const lastSpeechTimeRef = useRef<number>(0)
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
-  const lastFinalTextRef = useRef<string>('')
-  const processedResultsRef = useRef<Set<string>>(new Set())
+  const lastProcessedResultIndexRef = useRef<number>(-1)
+  const recognitionAbortedRef = useRef<boolean>(false)
 
   // Coding terminology corrections
   const correctCodingTerms = (text: string): string => {
@@ -145,15 +145,11 @@ export default function Recorder(): JSX.Element {
       return
     }
 
-    // Clear any existing timers
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current)
-      silenceTimerRef.current = null
-    }
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current)
-      debounceTimerRef.current = null
-    }
+    // Clear any existing timers and reset result tracking
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    lastProcessedResultIndexRef.current = -1
+    recognitionAbortedRef.current = false
 
     const SpeechRecognition: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
     const recognition = new SpeechRecognition()
@@ -177,75 +173,64 @@ export default function Recorder(): JSX.Element {
     // Keep it simple to avoid errors
 
     recognition.onresult = (e: SpeechRecognitionEvent) => {
+      // Ignore results if recognition was aborted
+      if (recognitionAbortedRef.current) {
+        console.log('⏸️ Ignoring results - recognition was aborted')
+        return
+      }
+      
       let interimTranscript = ''
-      let finalTranscript = ''
+      let finalParts: string[] = []
       
+      // Process only new results starting from resultIndex
       for (let i = e.resultIndex; i < e.results.length; ++i) {
-        const res = e.results[i]
-        let transcript = (res[0].transcript || '').trim()
+        const transcript = (e.results[i][0].transcript || '').trim()
+        const correctedTranscript = correctCodingTerms(transcript)
         
-        // Apply coding terminology corrections
-        transcript = correctCodingTerms(transcript)
-        
-        if (res.isFinal && transcript) {
-          // Create unique identifier for this result
-          const resultId = `${i}-${transcript}`
-          
-          // Only add if we haven't processed this exact result before
-          if (!processedResultsRef.current.has(resultId) && transcript !== lastFinalTextRef.current) {
-            finalTranscript += transcript
-            processedResultsRef.current.add(resultId)
-            lastFinalTextRef.current = transcript
+        if (e.results[i].isFinal && correctedTranscript) {
+          // Only add NEW final results we haven't seen before
+          if (i > lastProcessedResultIndexRef.current) {
+            finalParts.push(correctedTranscript)
+            lastProcessedResultIndexRef.current = i
+            console.log(`✅ Final[${i}]: "${correctedTranscript}"`)
           }
-        } else if (!res.isFinal && transcript) {
-          interimTranscript += transcript
+        } else if (!e.results[i].isFinal && correctedTranscript) {
+          // Show interim text while speaking
+          interimTranscript = correctedTranscript
         }
       }
       
-      // Update last speech time when we get any speech
-      if (interimTranscript || finalTranscript) {
+      // Add all new final text in one update
+      if (finalParts.length > 0) {
+        const textToAdd = finalParts.join(' ')
+        setFinalText(prev => prev ? prev + ' ' + textToAdd : textToAdd)
+        setInterim('') // Clear interim when we get final
+      } else {
+        // Only update interim if no final results in this event
+        setInterim(interimTranscript)
+      }
+      
+      // Update speech activity timestamp
+      if (interimTranscript || finalParts.length > 0) {
         lastSpeechTimeRef.current = Date.now()
-        
-        // Clear any existing silence timer
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current)
-          silenceTimerRef.current = null
-        }
-      }
-      
-      // Update interim text immediately for responsiveness
-      setInterim(interimTranscript)
-      
-      // Add final transcript only if it's new and not empty
-      if (finalTranscript && finalTranscript.trim()) {
-        setFinalText(prev => {
-          const newText = prev ? prev + ' ' + finalTranscript : finalTranscript
-          return newText
-        })
-      }
-      
-      // Set up silence detection for auto-transcription
-      if (interimTranscript && !silenceTimerRef.current) {
-        silenceTimerRef.current = setTimeout(() => {
-          let currentInterim = interimTranscript.trim()
-          // Apply coding corrections to interim text too
-          currentInterim = correctCodingTerms(currentInterim)
-          
-          if (currentInterim && currentInterim !== lastFinalTextRef.current) {
-            setFinalText(prev => {
-              const newText = prev ? prev + ' ' + currentInterim : currentInterim
-              lastFinalTextRef.current = currentInterim
-              return newText
-            })
-            setInterim('')
-          }
-          silenceTimerRef.current = null
-        }, 700)
       }
     }
 
     recognition.onerror = (e: any) => {
-      console.error('Recognition error', e)
+      console.error('Recognition error', e.error)
+    }
+
+    recognition.onend = () => {
+      console.log('Recognition ended')
+      // Auto-restart if still recording and not explicitly aborted
+      if (status === 'recording' && !recognitionAbortedRef.current && recognitionRef.current) {
+        try {
+          console.log('Restarting recognition...')
+          recognitionRef.current.start()
+        } catch (err) {
+          console.error('Error restarting recognition:', err)
+        }
+      }
     }
 
     recognitionRef.current = recognition
@@ -391,20 +376,19 @@ export default function Recorder(): JSX.Element {
   }
 
   const pause = () => {
+    recognitionAbortedRef.current = true
     if (recognitionRef.current) {
       try { recognitionRef.current.stop() } catch (e) {}
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach((t: MediaStreamTrack) => (t.enabled = false))
     }
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current)
-      silenceTimerRef.current = null
-    }
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
     setStatus('paused')
   }
 
   const resume = async () => {
+    recognitionAbortedRef.current = false
     if (recognitionRef.current) {
       try { recognitionRef.current.start() } catch (e) {}
     }
@@ -417,6 +401,7 @@ export default function Recorder(): JSX.Element {
   }
 
   const stop = () => {
+    recognitionAbortedRef.current = true
     if (recognitionRef.current) {
       try { recognitionRef.current.stop() } catch (e) {}
     }
@@ -427,11 +412,16 @@ export default function Recorder(): JSX.Element {
       clearTimeout(silenceTimerRef.current)
       silenceTimerRef.current = null
     }
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+      debounceTimerRef.current = null
+    }
     
     // Auto-transcribe any remaining interim text
     setInterim(prev => {
       if (prev) {
-        setFinalText(current => (current ? current + ' ' + prev : prev))
+        const corrected = correctCodingTerms(prev)
+        setFinalText(current => (current ? current + ' ' + corrected : corrected))
         return ''
       }
       return prev
@@ -441,12 +431,12 @@ export default function Recorder(): JSX.Element {
   }
 
   const clearAll = () => {
+    recognitionAbortedRef.current = true
     setInterim('')
     setFinalText('')
     setStatus('idle')
-    // Clear tracking references to prevent issues
-    lastFinalTextRef.current = ''
-    processedResultsRef.current.clear()
+    // Reset result index tracker
+    lastProcessedResultIndexRef.current = -1
   }
 
   return (
