@@ -27,15 +27,16 @@ export default function Recorder(): JSX.Element {
   const [interim, setInterim] = useState<string>('')
   const [lang, setLang] = useState<string>('en-US')
   const [finalText, setFinalText] = useState<string>('')
+  const [copySuccess, setCopySuccess] = useState<boolean>(false)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const recognitionRef = useRef<any>(null)
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const silenceTimerRef = useRef<number | null>(null)
   const lastSpeechTimeRef = useRef<number>(0)
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimerRef = useRef<number | null>(null)
   const lastProcessedResultIndexRef = useRef<number>(-1)
   const recognitionAbortedRef = useRef<boolean>(false)
 
@@ -271,12 +272,12 @@ export default function Recorder(): JSX.Element {
         console.log('Status set to recording')
       } catch (err) {
         console.error('Recognition start error:', err)
-        alert(`Speech recognition failed to start: ${err.message}`)
+        alert(`Speech recognition failed to start: ${err instanceof Error ? err.message : 'Unknown error'}`)
         return
       }
     } catch (err) {
       console.error('Microphone error:', err)
-      alert(`Could not start microphone: ${err.message}`)
+      alert(`Could not start microphone: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
   }
 
@@ -439,6 +440,59 @@ export default function Recorder(): JSX.Element {
     lastProcessedResultIndexRef.current = -1
   }
 
+  const copyAllText = async () => {
+    const textToCopy = finalText + (interim ? ' ' + interim : '')
+    
+    if (!textToCopy.trim()) {
+      return // Nothing to copy
+    }
+
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      setCopySuccess(true)
+      
+      // Show success feedback for 1 second
+      setTimeout(() => {
+        setCopySuccess(false)
+      }, 1000)
+      
+      // Auto-clear text after successful copy
+      setTimeout(() => {
+        setFinalText('')
+        setInterim('')
+        lastProcessedResultIndexRef.current = -1
+      }, 1200) // Small delay after feedback disappears
+      
+    } catch (err) {
+      console.error('Failed to copy text:', err)
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea')
+        textArea.value = textToCopy
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+        
+        setCopySuccess(true)
+        setTimeout(() => {
+          setCopySuccess(false)
+        }, 1000)
+        
+        // Auto-clear text after successful copy
+        setTimeout(() => {
+          setFinalText('')
+          setInterim('')
+          lastProcessedResultIndexRef.current = -1
+        }, 1200)
+        
+      } catch (fallbackErr) {
+        console.error('Fallback copy also failed:', fallbackErr)
+        alert('Copy failed. Please select and copy the text manually.')
+      }
+    }
+  }
+
   return (
     <div className="recorder">
       <div className="left">
@@ -477,7 +531,18 @@ export default function Recorder(): JSX.Element {
       </div>
       <div className="right">
         <div className="panel transcript">
-          <h2>📝 Transcript</h2>
+          <div className="transcript-header">
+            <h2>📝 Transcript</h2>
+            {(finalText || interim) && (
+              <button 
+                className={`copy-btn ${copySuccess ? 'success' : ''}`}
+                onClick={copyAllText}
+                disabled={copySuccess}
+              >
+                {copySuccess ? '✅ Copied!' : '📋 Copy All'}
+              </button>
+            )}
+          </div>
           <div className="largeText">
             {finalText && (
               <div style={{ marginBottom: '16px', opacity: 1 }}>
