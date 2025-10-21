@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import Recorder from './components/Recorder'
+import GeminiRecorder from './components/GeminiRecorder'
 
 export default function App() {
   const [dark, setDark] = useState(false)
@@ -17,10 +17,10 @@ export default function App() {
       </header>
 
       <main className="main">
-        <Recorder />
+        <GeminiRecorder />
       </main>
 
-      <footer className="footer">Built with ♥ By Bipin Rizal— Focused on English, Nepali & Hindi</footer>
+      <footer className="footer">Maile nai ho banako !-- Bipin Rizal♥</footer>
     </div>
   )
 }
