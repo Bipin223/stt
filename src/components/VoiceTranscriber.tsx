@@ -283,7 +283,6 @@ const VoiceTranscriber = () => {
     recognition.maxAlternatives = 1; // Get the best result
 
     recognition.onstart = () => {
-      console.log('🎙️ Speech recognition started successfully');
       setStatus("Listening...");
       setListening(true);
       isProcessingRef.current = false;
@@ -346,42 +345,8 @@ const VoiceTranscriber = () => {
     };
 
     recognition.onerror = (event: any) => {
-      console.error("❌ Speech recognition error:", event.error, event);
-      console.log('Error details:', {
-        error: event.error,
-        message: event.message,
-        type: event.type,
-        timeStamp: event.timeStamp
-      });
-      
-      let errorMessage = `Error: ${event.error}`;
-      
-      // Provide more helpful error messages
-      switch (event.error) {
-        case 'not-allowed':
-          errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
-          break;
-        case 'no-speech':
-          errorMessage = 'No speech detected. Please try speaking again.';
-          break;
-        case 'audio-capture':
-          errorMessage = 'Audio capture failed. Please check your microphone.';
-          break;
-        case 'network':
-          errorMessage = 'Network error. Please check your internet connection.';
-          break;
-        case 'service-not-allowed':
-          errorMessage = 'Speech service not allowed. Please use HTTPS.';
-          break;
-        case 'bad-grammar':
-          errorMessage = 'Grammar error in speech recognition.';
-          break;
-        case 'language-not-supported':
-          errorMessage = 'Selected language not supported.';
-          break;
-      }
-      
-      setStatus(errorMessage);
+      console.error("Speech recognition error:", event.error);
+      setStatus(`Error: ${event.error}`);
       setListening(false);
       isProcessingRef.current = false;
       
@@ -422,45 +387,15 @@ const VoiceTranscriber = () => {
     };
   }, [language]);
 
-  const checkMicrophonePermission = async () => {
-    try {
-      console.log('🔍 Checking microphone permission...');
-      const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-      console.log('🎤 Microphone permission state:', result.state);
-      return result.state;
-    } catch (error) {
-      console.log('⚠️ Could not check microphone permission:', error);
-      return 'unknown';
-    }
-  };
-
-  const startListening = async () => {
-    console.log('🎤 Starting speech recognition...');
-    console.log('Protocol:', location.protocol);
-    console.log('Hostname:', location.hostname);
-    console.log('User Agent:', navigator.userAgent);
-    
+  const startListening = () => {
     if (!isSupported) {
-      const message = "Your browser does not support Speech Recognition. Please use Chrome, Edge, or Safari.";
-      console.error('❌', message);
-      alert(message);
+      alert("Your browser does not support Speech Recognition. Please use Chrome, Edge, or Safari.");
       return;
     }
 
     // Check for HTTPS or localhost (required for microphone access)
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      const message = 'Microphone access requires HTTPS or localhost. Please use a secure connection.';
-      console.error('❌', message);
-      alert(message);
-      return;
-    }
-
-    // Check microphone permission
-    const micPermission = await checkMicrophonePermission();
-    if (micPermission === 'denied') {
-      const message = 'Microphone access is denied. Please enable microphone access in your browser settings and refresh the page.';
-      console.error('❌', message);
-      alert(message);
+      alert('Microphone access requires HTTPS or localhost. Please use a secure connection.');
       return;
     }
 
@@ -480,14 +415,11 @@ const VoiceTranscriber = () => {
       recognitionRef.current.lang = language;
       
       try {
-        console.log('🚀 Attempting to start recognition...');
         recognitionRef.current.start();
         setStatus("Starting...");
-        console.log('✅ Recognition start command sent');
       } catch (error) {
-        console.error("❌ Error starting recognition:", error);
-        setStatus(`Error starting recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        alert(`Failed to start speech recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        console.error("Error starting recognition:", error);
+        setStatus("Error starting recognition");
       }
     }
   };
