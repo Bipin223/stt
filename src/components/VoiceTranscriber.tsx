@@ -267,11 +267,21 @@ const VoiceTranscriber = () => {
   };
 
   useEffect(() => {
+    // Debug information for Vercel deployment
+    console.log('Environment check:', {
+      protocol: location.protocol,
+      hostname: location.hostname,
+      userAgent: navigator.userAgent,
+      hasGetUserMedia: !!navigator.mediaDevices?.getUserMedia,
+      hasSpeechRecognition: !!(window.SpeechRecognition || window.webkitSpeechRecognition)
+    });
+    
     // Check if Speech Recognition is supported
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setIsSupported(false);
       setStatus("Speech Recognition not supported in this browser");
+      console.error('Speech Recognition not available');
       return;
     }
 
@@ -345,8 +355,32 @@ const VoiceTranscriber = () => {
     };
 
     recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      setStatus(`Error: ${event.error}`);
+      console.error("Speech recognition error:", event.error, event);
+      
+      let errorMessage = `Error: ${event.error}`;
+      
+      // Provide more helpful error messages
+      switch (event.error) {
+        case 'not-allowed':
+          errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
+          break;
+        case 'no-speech':
+          errorMessage = 'No speech detected. Please try speaking again.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'Audio capture failed. Please check your microphone.';
+          break;
+        case 'network':
+          errorMessage = 'Network error. Please check your internet connection.';
+          break;
+        case 'service-not-allowed':
+          errorMessage = 'Speech service not allowed. This may be due to browser security settings.';
+          break;
+        default:
+          errorMessage = `Speech recognition error: ${event.error}`;
+      }
+      
+      setStatus(errorMessage);
       setListening(false);
       isProcessingRef.current = false;
       
@@ -354,6 +388,11 @@ const VoiceTranscriber = () => {
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
+      }
+      
+      // Show alert for critical errors
+      if (['not-allowed', 'service-not-allowed', 'audio-capture'].includes(event.error)) {
+        alert(errorMessage);
       }
     };
 
@@ -387,7 +426,7 @@ const VoiceTranscriber = () => {
     };
   }, [language]);
 
-  const startListening = () => {
+  const startListening = async () => {
     if (!isSupported) {
       alert("Your browser does not support Speech Recognition. Please use Chrome, Edge, or Safari.");
       return;
@@ -396,6 +435,18 @@ const VoiceTranscriber = () => {
     // Check for HTTPS or localhost (required for microphone access)
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
       alert('Microphone access requires HTTPS or localhost. Please use a secure connection.');
+      return;
+    }
+
+    // Request microphone permission explicitly for Vercel deployment
+    try {
+      console.log('Requesting microphone permission...');
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('Microphone permission granted');
+    } catch (error) {
+      console.error('Microphone permission denied:', error);
+      setStatus(`Microphone access denied: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      alert('Please allow microphone access to use speech recognition. Check your browser settings and reload the page.');
       return;
     }
 
@@ -415,11 +466,13 @@ const VoiceTranscriber = () => {
       recognitionRef.current.lang = language;
       
       try {
+        console.log('Starting speech recognition...');
         recognitionRef.current.start();
         setStatus("Starting...");
       } catch (error) {
         console.error("Error starting recognition:", error);
-        setStatus("Error starting recognition");
+        setStatus(`Error starting recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        alert(`Failed to start speech recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   };
