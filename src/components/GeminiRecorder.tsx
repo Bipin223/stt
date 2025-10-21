@@ -3,18 +3,14 @@ import { geminiSpeechToText, TranscriptionResult } from '../utils/geminiSpeechTo
 
 type Status = 'idle' | 'recording' | 'processing' | 'completed' | 'error'
 
-const languages = [
-  { code: 'en-US', name: 'English', flag: '🇺🇸' },
-  { code: 'ne-NP', name: 'Nepali', flag: '🇳🇵' },
-  { code: 'hi-IN', name: 'Hindi', flag: '🇮🇳' }
-]
-
 export default function GeminiRecorder(): JSX.Element {
   const [status, setStatus] = useState<Status>('idle')
-  const [lang, setLang] = useState<string>('en-US')
   const [transcribedText, setTranscribedText] = useState<string>('')
   const [copySuccess, setCopySuccess] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
+  const [isEditing, setIsEditing] = useState<boolean>(false)
+  const [recordingDuration, setRecordingDuration] = useState<number>(0)
+  const [estimatedFileSize, setEstimatedFileSize] = useState<number>(0)
   
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -26,6 +22,10 @@ export default function GeminiRecorder(): JSX.Element {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const rafRef = useRef<number | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  
+  // Recording monitoring refs
+  const recordingStartTimeRef = useRef<number>(0)
+  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     return () => {
@@ -42,6 +42,9 @@ export default function GeminiRecorder(): JSX.Element {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop()
     }
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current)
+    }
   }
 
   const startRecording = async () => {
@@ -57,6 +60,9 @@ export default function GeminiRecorder(): JSX.Element {
       
       setStatus('recording')
       audioChunksRef.current = []
+      setRecordingDuration(0)
+      setEstimatedFileSize(0)
+      recordingStartTimeRef.current = Date.now()
 
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -86,9 +92,24 @@ export default function GeminiRecorder(): JSX.Element {
       // Start visualization
       drawWaveform()
 
-      // Setup MediaRecorder
+      // Setup MediaRecorder with optimized settings for longer recordings
+      // Try different formats for better compatibility
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = ''; // Use default
+          }
+        }
+      }
+      
+      console.log(`Using audio format: ${mimeType || 'default'}`);
+      
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
+        mimeType: mimeType || undefined,
+        audioBitsPerSecond: 64000 // Reduced bitrate to keep file size manageable
       })
       
       mediaRecorderRef.current = mediaRecorder
@@ -96,15 +117,35 @@ export default function GeminiRecorder(): JSX.Element {
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data)
+          // Update estimated file size
+          const totalSize = audioChunksRef.current.reduce((sum, chunk) => sum + chunk.size, 0)
+          setEstimatedFileSize(totalSize)
         }
       }
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' })
+        if (durationIntervalRef.current) {
+          clearInterval(durationIntervalRef.current)
+        }
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' })
+        console.log(`Final audio file size: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB, type: ${audioBlob.type}`)
         await transcribeAudio(audioBlob)
       }
 
-      mediaRecorder.start()
+      // Start recording with timeslice for better handling of longer recordings
+      mediaRecorder.start(1000) // Collect data every 1 second
+      
+      // Start duration tracking
+      durationIntervalRef.current = setInterval(() => {
+        const elapsed = (Date.now() - recordingStartTimeRef.current) / 1000
+        setRecordingDuration(elapsed)
+        
+        // Auto-stop if recording gets too long (5 minutes max to prevent huge files)
+        if (elapsed > 300) { // 5 minutes
+          stopRecording()
+          setError('Recording stopped automatically after 5 minutes to prevent large files.')
+        }
+      }, 100)
 
     } catch (err) {
       console.error('Recording error:', err)
@@ -117,6 +158,12 @@ export default function GeminiRecorder(): JSX.Element {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop()
       setStatus('processing')
+    }
+    
+    // Stop duration tracking
+    if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current)
+      durationIntervalRef.current = null
     }
     
     // Stop visualization
@@ -134,7 +181,7 @@ export default function GeminiRecorder(): JSX.Element {
   const transcribeAudio = async (audioBlob: Blob) => {
     try {
       setStatus('processing')
-      const result: TranscriptionResult = await geminiSpeechToText.transcribeAudio(audioBlob, lang)
+      const result: TranscriptionResult = await geminiSpeechToText.transcribeAudio(audioBlob)
       
       if (result.text) {
         setTranscribedText(prev => prev ? prev + ' ' + result.text : result.text)
@@ -248,6 +295,9 @@ export default function GeminiRecorder(): JSX.Element {
     setTranscribedText('')
     setError('')
     setStatus('idle')
+    setRecordingDuration(0)
+    setEstimatedFileSize(0)
+    setIsEditing(false)
   }
 
   const copyText = async () => {
@@ -261,12 +311,7 @@ export default function GeminiRecorder(): JSX.Element {
       
       setTimeout(() => {
         setCopySuccess(false)
-      }, 1000)
-      
-      // Auto-clear text after successful copy
-      setTimeout(() => {
-        setTranscribedText('')
-      }, 1200)
+      }, 2000)
       
     } catch (err) {
       console.error('Failed to copy text:', err)
@@ -282,11 +327,7 @@ export default function GeminiRecorder(): JSX.Element {
         setCopySuccess(true)
         setTimeout(() => {
           setCopySuccess(false)
-        }, 1000)
-        
-        setTimeout(() => {
-          setTranscribedText('')
-        }, 1200)
+        }, 2000)
         
       } catch (fallbackErr) {
         console.error('Fallback copy also failed:', fallbackErr)
@@ -298,15 +339,18 @@ export default function GeminiRecorder(): JSX.Element {
   const getStatusMessage = () => {
     switch (status) {
       case 'recording':
-        return '🎤 Recording... Click "Stop & Transcribe" when done'
+        const minutes = Math.floor(recordingDuration / 60)
+        const seconds = Math.floor(recordingDuration % 60)
+        const fileSizeMB = (estimatedFileSize / 1024 / 1024).toFixed(1)
+        return `🎤 Recording... ${minutes}:${seconds.toString().padStart(2, '0')} (${fileSizeMB}MB) - Click "Stop & Transcribe" when done`
       case 'processing':
-        return '🤖 Processing ngga'
+        return '🤖 Processing your audio...'
       case 'completed':
         return '✅ Transcription completed!'
       case 'error':
         return `❌ Error: ${error}`
       default:
-        return '🎙️ Click "Start Recording" to begin'
+        return '🎙️ Click "Start Recording" to begin (Max: 5 minutes, 20MB)'
     }
   }
 
@@ -347,22 +391,7 @@ export default function GeminiRecorder(): JSX.Element {
               🗑️ Clear
             </button>
           </div>
-          <div className="lang-selector">
-            <div className="lang-label">Language</div>
-            <div className="lang-buttons" data-active={lang}>
-              {languages.map((language) => (
-                <button
-                  key={language.code}
-                  className={`lang-btn ${lang === language.code ? 'active' : ''}`}
-                  onClick={() => setLang(language.code)}
-                  disabled={status === 'recording' || status === 'processing'}
-                >
-                  <span className="lang-flag">{language.flag}</span>
-                  <span className="lang-name">{language.name}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+
           <div className="status-message">
             {getStatusMessage()}
           </div>
@@ -371,26 +400,48 @@ export default function GeminiRecorder(): JSX.Element {
       <div className="right">
         <div className="panel transcript">
           <div className="transcript-header">
-            <h2>📝 Transcription yaha cha 😎😒</h2>
-            {transcribedText && (
-              <button 
-                className={`copy-btn ${copySuccess ? 'success' : ''}`}
-                onClick={copyText}
-                disabled={copySuccess}
-              >
-                {copySuccess ? '✅ Copied!' : '📋 Copy Text'}
-              </button>
-            )}
+            <h2>📝 Transcription</h2>
+            <div className="transcript-controls">
+              {transcribedText && (
+                <>
+                  <button 
+                    className={`edit-btn ${isEditing ? 'active' : ''}`}
+                    onClick={() => setIsEditing(!isEditing)}
+                  >
+                    {isEditing ? '✅ Done' : '✏️ Edit'}
+                  </button>
+                  <button 
+                    className={`copy-btn ${copySuccess ? 'success' : ''}`}
+                    onClick={copyText}
+                    disabled={copySuccess}
+                  >
+                    {copySuccess ? '✅ Copied!' : '📋 Copy Text'}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="largeText">
             {transcribedText && (
               <div style={{ marginBottom: '16px', opacity: 1 }}>
-                {transcribedText}
+                {isEditing ? (
+                  <textarea
+                    value={transcribedText}
+                    onChange={(e) => setTranscribedText(e.target.value)}
+                    className="edit-textarea"
+                    placeholder="Edit your transcription here..."
+                    autoFocus
+                  />
+                ) : (
+                  <div className="transcription-text" onClick={() => setIsEditing(true)}>
+                    {transcribedText}
+                  </div>
+                )}
               </div>
             )}
             {!transcribedText && status !== 'error' && (
               <div style={{ opacity: 0.5, textAlign: 'center', marginTop: '60px' }}>
-                Yetaa aaucha texts fuchay 😉
+                Your transcribed text will appear here 🎤
               </div>
             )}
             {error && status === 'error' && (

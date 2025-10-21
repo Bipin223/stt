@@ -29,20 +29,40 @@ export class GeminiSpeechToText {
     });
   }
 
-  async transcribeAudio(audioBlob: Blob, language: string = 'en'): Promise<TranscriptionResult> {
+  async transcribeAudio(audioBlob: Blob): Promise<TranscriptionResult> {
     try {
-      // Convert blob to base64
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      // Check file size limit (20MB = 20 * 1024 * 1024 bytes)
+      const maxSize = 20 * 1024 * 1024; // 20MB
+      if (audioBlob.size > maxSize) {
+        throw new Error(`Audio file too large (${(audioBlob.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 20MB.`);
+      }
 
-      // Create the prompt based on language
-      const languagePrompts = {
-        'en-US': 'Transcribe this English audio to text. Focus on accuracy and proper formatting. If you detect coding or technical terms, ensure they are correctly formatted.',
-        'ne-NP': 'यो नेपाली अडियोलाई पाठमा रूपान्तरण गर्नुहोस्। सटीकता र उचित ढाँचामा ध्यान दिनुहोस्।',
-        'hi-IN': 'इस हिंदी ऑडियो को टेक्स्ट में ट्रांसक्राइब करें। सटीकता और उचित फॉर्मेटिंग पर ध्यान दें।'
-      };
+      console.log(`Processing audio file: ${(audioBlob.size / 1024 / 1024).toFixed(2)}MB, type: ${audioBlob.type}`);
 
-      const prompt = languagePrompts[language as keyof typeof languagePrompts] || languagePrompts['en-US'];
+      // Convert blob to base64 using FileReader (more reliable than manual conversion)
+      const base64Audio = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          // Remove the data URL prefix (e.g., "data:audio/webm;base64,")
+          const base64Data = result.split(',')[1];
+          resolve(base64Data);
+        };
+        reader.onerror = () => reject(new Error('Failed to read audio file'));
+        reader.readAsDataURL(audioBlob);
+      });
+
+      // Enhanced prompt for better transcription accuracy
+      const prompt = `Transcribe this audio file to text. Requirements:
+- Detect the language automatically
+- Provide accurate word-for-word transcription
+- Use proper punctuation and capitalization
+- Handle technical terms correctly
+- Return only the transcribed text, no additional commentary
+
+Audio format: ${audioBlob.type}`;
+
+      console.log(`Sending request to Gemini API with ${base64Audio.length} characters of base64 data`);
 
       const result = await this.model.generateContent([
         {
@@ -56,14 +76,16 @@ export class GeminiSpeechToText {
 
       const response = await result.response;
       const text = response.text();
+      
+      console.log('Gemini API response received:', text.substring(0, 100) + '...');
 
-      // Apply coding term corrections for English
-      const correctedText = language === 'en-US' ? this.correctCodingTerms(text) : text;
+      // Apply general term corrections
+      const correctedText = this.correctCommonTerms(text);
 
       return {
         text: correctedText.trim(),
         confidence: 0.9, // Gemini doesn't provide confidence, so we use a default high value
-        language: language
+        language: 'auto-detected'
       };
 
     } catch (error) {
@@ -71,12 +93,27 @@ export class GeminiSpeechToText {
       
       // Handle specific API errors
       if (error instanceof Error) {
-        if (error.message.includes('API_KEY_INVALID')) {
+        // File size error
+        if (error.message.includes('Audio file too large')) {
+          throw error;
+        }
+        // Base64 conversion errors
+        if (error.message.includes('Failed to read audio file')) {
+          throw new Error('Failed to process audio file. Please try recording again.');
+        }
+        // API errors
+        if (error.message.includes('API_KEY_INVALID') || error.message.includes('Invalid API key')) {
           throw new Error('Invalid API key. Please check your Gemini API key in the .env file.');
         } else if (error.message.includes('QUOTA_EXCEEDED')) {
           throw new Error('API quota exceeded. Please check your Gemini API usage limits.');
         } else if (error.message.includes('PERMISSION_DENIED')) {
           throw new Error('Permission denied. Please ensure your API key has the necessary permissions.');
+        } else if (error.message.includes('Invalid value') || error.message.includes('Base64 decoding failed')) {
+          throw new Error('Audio format not supported or corrupted. Please try recording again.');
+        } else if (error.message.includes('Request payload size exceeds')) {
+          throw new Error('Audio file too large. Please try a shorter recording (max 20MB).');
+        } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
+          throw new Error('API rate limit exceeded. Please wait a moment and try again.');
         }
       }
       
@@ -84,7 +121,7 @@ export class GeminiSpeechToText {
     }
   }
 
-  private correctCodingTerms(text: string): string {
+  private correctCommonTerms(text: string): string {
     const corrections: { [key: string]: string } = {
       'evaluation': 'navigation',
       'function': 'function',
