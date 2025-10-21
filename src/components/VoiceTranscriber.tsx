@@ -24,6 +24,7 @@ const VoiceTranscriber = () => {
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSpeechTimeRef = useRef<number>(0);
   const isProcessingRef = useRef<boolean>(false);
+  const lastProcessedResultIndexRef = useRef<number>(-1);
 
   // Enhanced coding and web development terminology corrections
   const correctTechnicalTerms = (text: string): string => {
@@ -282,6 +283,7 @@ const VoiceTranscriber = () => {
     recognition.maxAlternatives = 1; // Get the best result
 
     recognition.onstart = () => {
+      console.log('🎙️ Speech recognition started successfully');
       setStatus("Listening...");
       setListening(true);
       isProcessingRef.current = false;
@@ -292,15 +294,21 @@ const VoiceTranscriber = () => {
       let finalTranscript = "";
       let interimTranscript = "";
       
-      // Process all results
+      // Process only new results to avoid duplication
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
         const transcriptPart = result[0].transcript.trim();
         
-        if (result.isFinal) {
-          finalTranscript += transcriptPart + " ";
-        } else {
-          interimTranscript += transcriptPart;
+        if (result.isFinal && transcriptPart) {
+          // Only add NEW final results we haven't seen before
+          if (i > lastProcessedResultIndexRef.current) {
+            const correctedTranscript = correctTechnicalTerms(transcriptPart);
+            finalTranscript += correctedTranscript + " ";
+            lastProcessedResultIndexRef.current = i;
+          }
+        } else if (!result.isFinal && transcriptPart) {
+          const correctedTranscript = correctTechnicalTerms(transcriptPart);
+          interimTranscript += correctedTranscript;
         }
       }
       
@@ -338,8 +346,42 @@ const VoiceTranscriber = () => {
     };
 
     recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      setStatus(`Error: ${event.error}`);
+      console.error("❌ Speech recognition error:", event.error, event);
+      console.log('Error details:', {
+        error: event.error,
+        message: event.message,
+        type: event.type,
+        timeStamp: event.timeStamp
+      });
+      
+      let errorMessage = `Error: ${event.error}`;
+      
+      // Provide more helpful error messages
+      switch (event.error) {
+        case 'not-allowed':
+          errorMessage = 'Microphone access denied. Please allow microphone access and try again.';
+          break;
+        case 'no-speech':
+          errorMessage = 'No speech detected. Please try speaking again.';
+          break;
+        case 'audio-capture':
+          errorMessage = 'Audio capture failed. Please check your microphone.';
+          break;
+        case 'network':
+          errorMessage = 'Network error. Please check your internet connection.';
+          break;
+        case 'service-not-allowed':
+          errorMessage = 'Speech service not allowed. Please use HTTPS.';
+          break;
+        case 'bad-grammar':
+          errorMessage = 'Grammar error in speech recognition.';
+          break;
+        case 'language-not-supported':
+          errorMessage = 'Selected language not supported.';
+          break;
+      }
+      
+      setStatus(errorMessage);
       setListening(false);
       isProcessingRef.current = false;
       
@@ -380,15 +422,45 @@ const VoiceTranscriber = () => {
     };
   }, [language]);
 
-  const startListening = () => {
+  const checkMicrophonePermission = async () => {
+    try {
+      console.log('🔍 Checking microphone permission...');
+      const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+      console.log('🎤 Microphone permission state:', result.state);
+      return result.state;
+    } catch (error) {
+      console.log('⚠️ Could not check microphone permission:', error);
+      return 'unknown';
+    }
+  };
+
+  const startListening = async () => {
+    console.log('🎤 Starting speech recognition...');
+    console.log('Protocol:', location.protocol);
+    console.log('Hostname:', location.hostname);
+    console.log('User Agent:', navigator.userAgent);
+    
     if (!isSupported) {
-      alert("Your browser does not support Speech Recognition. Please use Chrome, Edge, or Safari.");
+      const message = "Your browser does not support Speech Recognition. Please use Chrome, Edge, or Safari.";
+      console.error('❌', message);
+      alert(message);
       return;
     }
 
     // Check for HTTPS or localhost (required for microphone access)
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      alert('Microphone access requires HTTPS or localhost. Please use a secure connection.');
+      const message = 'Microphone access requires HTTPS or localhost. Please use a secure connection.';
+      console.error('❌', message);
+      alert(message);
+      return;
+    }
+
+    // Check microphone permission
+    const micPermission = await checkMicrophonePermission();
+    if (micPermission === 'denied') {
+      const message = 'Microphone access is denied. Please enable microphone access in your browser settings and refresh the page.';
+      console.error('❌', message);
+      alert(message);
       return;
     }
 
@@ -396,6 +468,7 @@ const VoiceTranscriber = () => {
       // Clear previous transcript and reset state
       setTranscript("");
       isProcessingRef.current = false;
+      lastProcessedResultIndexRef.current = -1; // Reset result tracking
       
       // Clear any existing timers
       if (silenceTimerRef.current) {
@@ -407,11 +480,14 @@ const VoiceTranscriber = () => {
       recognitionRef.current.lang = language;
       
       try {
+        console.log('🚀 Attempting to start recognition...');
         recognitionRef.current.start();
         setStatus("Starting...");
+        console.log('✅ Recognition start command sent');
       } catch (error) {
-        console.error("Error starting recognition:", error);
-        setStatus("Error starting recognition");
+        console.error("❌ Error starting recognition:", error);
+        setStatus(`Error starting recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        alert(`Failed to start speech recognition: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
   };
@@ -449,6 +525,7 @@ const VoiceTranscriber = () => {
     
     // Reset processing state
     isProcessingRef.current = false;
+    lastProcessedResultIndexRef.current = -1; // Reset result tracking
   };
 
   const copyToClipboard = async () => {
