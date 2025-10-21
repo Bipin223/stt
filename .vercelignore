@@ -1,8 +1,2 @@
 node_modules
 .git
-.gitignore
-README.md
-src
-tsconfig.json
-vite.config.ts
-package-lock.json
