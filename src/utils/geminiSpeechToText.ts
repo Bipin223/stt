@@ -54,7 +54,7 @@ export class GeminiSpeechToText {
 
       // Enhanced prompt for better transcription accuracy
       const prompt = `Transcribe this audio file to text. Requirements:
-- Detect the language automatically
+- Transcribe in English language only
 - Provide accurate word-for-word transcription
 - Use proper punctuation and capitalization
 - Handle technical terms correctly
@@ -85,7 +85,7 @@ Audio format: ${audioBlob.type}`;
       return {
         text: correctedText.trim(),
         confidence: 0.9, // Gemini doesn't provide confidence, so we use a default high value
-        language: 'auto-detected'
+        language: 'en-US'
       };
 
     } catch (error) {
