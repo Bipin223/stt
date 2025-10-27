@@ -121,6 +121,47 @@ Audio format: ${audioBlob.type}`;
     }
   }
 
+  async enhanceText(text: string): Promise<string> {
+    try {
+      if (!text.trim()) {
+        throw new Error('No text provided to enhance');
+      }
+
+      const prompt = `Transform the following brief text into a detailed, comprehensive, and well-structured version. Expand the content with relevant details, context, and specifics while maintaining the core message. Make it thorough and complete without adding explanations, justifications, or meta-commentary.
+
+Original text: "${text}"
+
+Detailed version:`;
+
+      console.log('Sending text enhancement request to Gemini API');
+
+      const result = await this.model.generateContent(prompt);
+      const response = await result.response;
+      const enhancedText = response.text();
+      
+      console.log('Text enhancement completed');
+
+      return enhancedText.trim();
+
+    } catch (error) {
+      console.error('Text enhancement error:', error);
+      
+      if (error instanceof Error) {
+        if (error.message.includes('API_KEY_INVALID') || error.message.includes('Invalid API key')) {
+          throw new Error('Invalid API key. Please check your Gemini API key in the .env file.');
+        } else if (error.message.includes('QUOTA_EXCEEDED')) {
+          throw new Error('API quota exceeded. Please check your Gemini API usage limits.');
+        } else if (error.message.includes('PERMISSION_DENIED')) {
+          throw new Error('Permission denied. Please ensure your API key has the necessary permissions.');
+        } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
+          throw new Error('API rate limit exceeded. Please wait a moment and try again.');
+        }
+      }
+      
+      throw new Error(`Text enhancement failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   private correctCommonTerms(text: string): string {
     const corrections: { [key: string]: string } = {
       'evaluation': 'navigation',

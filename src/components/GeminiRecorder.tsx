@@ -11,6 +11,7 @@ export default function GeminiRecorder(): JSX.Element {
   const [isEditing, setIsEditing] = useState<boolean>(false)
   const [recordingDuration, setRecordingDuration] = useState<number>(0)
   const [estimatedFileSize, setEstimatedFileSize] = useState<number>(0)
+  const [isEnhancing, setIsEnhancing] = useState<boolean>(false)
   
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -298,6 +299,27 @@ export default function GeminiRecorder(): JSX.Element {
     setRecordingDuration(0)
     setEstimatedFileSize(0)
     setIsEditing(false)
+    setIsEnhancing(false)
+  }
+
+  const enhanceText = async () => {
+    if (!transcribedText.trim()) {
+      return
+    }
+
+    try {
+      setIsEnhancing(true)
+      setError('')
+      
+      const enhancedText = await geminiSpeechToText.enhanceText(transcribedText)
+      setTranscribedText(enhancedText)
+      
+    } catch (err) {
+      console.error('Enhancement error:', err)
+      setError(`Enhancement failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setIsEnhancing(false)
+    }
   }
 
   const copyText = async () => {
@@ -385,6 +407,15 @@ export default function GeminiRecorder(): JSX.Element {
             {(status === 'completed' || status === 'error') && (
               <button className="btn record" onClick={startRecording}>
                 🎤 Record Again
+              </button>
+            )}
+            {transcribedText && (
+              <button 
+                className={`btn enhance ${isEnhancing ? 'processing' : ''}`}
+                onClick={enhanceText}
+                disabled={isEnhancing}
+              >
+                {isEnhancing ? '✨ Enhancing...' : '✨ Enhance'}
               </button>
             )}
             <button className="btn clear" onClick={clearAll}>
