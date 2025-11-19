@@ -20,7 +20,7 @@ export default function App() {
         <GeminiRecorder />
       </main>
 
-      <footer className="footer">Maile nai ho banako !-- Bipin Rizal♥</footer>
+      <footer className="footer">Enjoy Transcribing!-- Bipin Rizal😉♥</footer>
     </div>
   )
 }

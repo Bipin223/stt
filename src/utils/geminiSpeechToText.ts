@@ -18,7 +18,7 @@ export class GeminiSpeechToText {
       throw new Error('VITE_GEMINI_API_KEY environment variable is required. Please add your Gemini API key to the .env file.');
     }
 
-    this.model = genAI.getGenerativeModel({ 
+    this.model = genAI.getGenerativeModel({
       model: "gemini-2.0-flash",
       generationConfig: {
         temperature: 0.1,
@@ -76,7 +76,7 @@ Audio format: ${audioBlob.type}`;
 
       const response = await result.response;
       const text = response.text();
-      
+
       console.log('Gemini API response received:', text.substring(0, 100) + '...');
 
       // Apply general term corrections
@@ -90,7 +90,7 @@ Audio format: ${audioBlob.type}`;
 
     } catch (error) {
       console.error('Gemini transcription error:', error);
-      
+
       // Handle specific API errors
       if (error instanceof Error) {
         // File size error
@@ -116,7 +116,7 @@ Audio format: ${audioBlob.type}`;
           throw new Error('API rate limit exceeded. Please wait a moment and try again.');
         }
       }
-      
+
       throw new Error(`Transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -127,25 +127,33 @@ Audio format: ${audioBlob.type}`;
         throw new Error('No text provided to enhance');
       }
 
-      const prompt = `Transform the following brief text into a detailed, comprehensive, and well-structured version. Expand the content with relevant details, context, and specifics while maintaining the core message. Make it thorough and complete without adding explanations, justifications, or meta-commentary.
+      const prompt = `Take the following user input and refine it into a clear, well-structured prompt. Keep it concise and focused on the main idea.
 
-Original text: "${text}"
+      Rules:
+      - Preserve the core intent and keep it brief
+      - Fix grammar, remove filler words, and improve clarity
+      - Add only essential context or details that strengthen the request
+      - Use a clean, professional structure
+      - Output should be 2-4 sentences maximum unless the input is already detailed
+      - Do NOT over-expand or add unnecessary sections
 
-Detailed version:`;
+      User input: "${text}"
+
+      Refined prompt:`;
 
       console.log('Sending text enhancement request to Gemini API');
 
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
       const enhancedText = response.text();
-      
+
       console.log('Text enhancement completed');
 
       return enhancedText.trim();
 
     } catch (error) {
       console.error('Text enhancement error:', error);
-      
+
       if (error instanceof Error) {
         if (error.message.includes('API_KEY_INVALID') || error.message.includes('Invalid API key')) {
           throw new Error('Invalid API key. Please check your Gemini API key in the .env file.');
@@ -157,7 +165,7 @@ Detailed version:`;
           throw new Error('API rate limit exceeded. Please wait a moment and try again.');
         }
       }
-      
+
       throw new Error(`Text enhancement failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -216,7 +224,7 @@ Detailed version:`;
       const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
       correctedText = correctedText.replace(regex, correct);
     });
-    
+
     return correctedText;
   }
 }
