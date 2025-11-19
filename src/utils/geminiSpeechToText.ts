@@ -9,6 +9,96 @@ export interface TranscriptionResult {
   language?: string;
 }
 
+// Request throttler to prevent rate limit errors
+class RequestThrottler {
+  private queue: Array<() => Promise<any>> = [];
+  private processing: boolean = false;
+  private lastRequestTime: number = 0;
+  private readonly minDelayMs: number = 4000; // 4 seconds between requests (15 RPM = 1 request per 4 seconds)
+  private readonly maxRetries: number = 3;
+
+  async enqueue<T>(request: () => Promise<T>): Promise<T> {
+    return new Promise((resolve, reject) => {
+      this.queue.push(async () => {
+        try {
+          // Retry logic with exponential backoff
+          const result = await this.retryWithBackoff(request);
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      this.processQueue();
+    });
+  }
+
+  private async retryWithBackoff<T>(request: () => Promise<T>): Promise<T> {
+    let lastError: any;
+
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      try {
+        return await request();
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if it's a rate limit error (429)
+        const is429Error = error?.message?.includes('429') ||
+          error?.message?.includes('Resource exhausted') ||
+          error?.message?.includes('RESOURCE_EXHAUSTED');
+
+        if (is429Error && attempt < this.maxRetries - 1) {
+          // Exponential backoff: 5s, 15s, 45s
+          const waitTime = Math.pow(3, attempt + 1) * 5000;
+          console.log(`⚠️ Rate limit hit (429). Retrying in ${waitTime / 1000}s... (Attempt ${attempt + 1}/${this.maxRetries})`);
+          await this.delay(waitTime);
+        } else if (!is429Error) {
+          // If it's not a rate limit error, don't retry
+          throw error;
+        }
+      }
+    }
+
+    // All retries failed
+    throw lastError;
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.processing || this.queue.length === 0) {
+      return;
+    }
+
+    this.processing = true;
+
+    while (this.queue.length > 0) {
+      const now = Date.now();
+      const timeSinceLastRequest = now - this.lastRequestTime;
+
+      // Wait if we need to throttle
+      if (timeSinceLastRequest < this.minDelayMs) {
+        const waitTime = this.minDelayMs - timeSinceLastRequest;
+        console.log(`⏳ Throttling: waiting ${(waitTime / 1000).toFixed(1)}s before next API request...`);
+        await this.delay(waitTime);
+      }
+
+      const request = this.queue.shift();
+      if (request) {
+        this.lastRequestTime = Date.now();
+        await request();
+      }
+    }
+
+    this.processing = false;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+// Global throttler instance
+const throttler = new RequestThrottler();
+
 export class GeminiSpeechToText {
   private model: any;
 
@@ -64,15 +154,18 @@ Audio format: ${audioBlob.type}`;
 
       console.log(`Sending request to Gemini API with ${base64Audio.length} characters of base64 data`);
 
-      const result = await this.model.generateContent([
-        {
-          inlineData: {
-            mimeType: audioBlob.type,
-            data: base64Audio
-          }
-        },
-        prompt
-      ]);
+      // Use throttler to prevent rate limit errors
+      const result = await throttler.enqueue(async () => {
+        return await this.model.generateContent([
+          {
+            inlineData: {
+              mimeType: audioBlob.type,
+              data: base64Audio
+            }
+          },
+          prompt
+        ]);
+      });
 
       const response = await result.response;
       const text = response.text();
@@ -143,7 +236,10 @@ Audio format: ${audioBlob.type}`;
 
       console.log('Sending text enhancement request to Gemini API');
 
-      const result = await this.model.generateContent(prompt);
+      // Use throttler to prevent rate limit errors
+      const result = await throttler.enqueue(async () => {
+        return await this.model.generateContent(prompt);
+      });
       const response = await result.response;
       const enhancedText = response.text();
 
