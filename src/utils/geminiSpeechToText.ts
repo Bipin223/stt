@@ -14,7 +14,7 @@ class RequestThrottler {
   private queue: Array<() => Promise<any>> = [];
   private processing: boolean = false;
   private lastRequestTime: number = 0;
-  private readonly minDelayMs: number = 4000; // 4 seconds between requests (15 RPM = 1 request per 4 seconds)
+  private readonly minDelayMs: number = 5000; // 5 seconds between requests (safer than 4s for 15 RPM limit)
   private readonly maxRetries: number = 3;
 
   async enqueue<T>(request: () => Promise<T>): Promise<T> {
@@ -48,9 +48,10 @@ class RequestThrottler {
           error?.message?.includes('RESOURCE_EXHAUSTED');
 
         if (is429Error && attempt < this.maxRetries - 1) {
-          // Exponential backoff: 5s, 15s, 45s
-          const waitTime = Math.pow(3, attempt + 1) * 5000;
-          console.log(`⚠️ Rate limit hit (429). Retrying in ${waitTime / 1000}s... (Attempt ${attempt + 1}/${this.maxRetries})`);
+          // Exponential backoff: 10s, 30s, 60s (longer delays for rate limits)
+          const waitTime = attempt === 0 ? 10000 : attempt === 1 ? 30000 : 60000;
+          console.log(`⚠️ Rate limit hit (429). Waiting ${waitTime / 1000}s before retry... (Attempt ${attempt + 1}/${this.maxRetries})`);
+          console.log(`💡 Tip: The free tier allows 15 requests per minute. Please wait between operations.`);
           await this.delay(waitTime);
         } else if (!is429Error) {
           // If it's not a rate limit error, don't retry
@@ -206,7 +207,7 @@ Audio format: ${audioBlob.type}`;
         } else if (error.message.includes('Request payload size exceeds')) {
           throw new Error('Audio file too large. Please try a shorter recording (max 20MB).');
         } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
-          throw new Error('API rate limit exceeded. Please wait a moment and try again.');
+          throw new Error('⏱️ Rate limit reached (15 requests/min max). Please wait 30-60 seconds before trying again. This is NOT a quota issue - just wait a bit!');
         }
       }
 
@@ -258,7 +259,7 @@ Audio format: ${audioBlob.type}`;
         } else if (error.message.includes('PERMISSION_DENIED')) {
           throw new Error('Permission denied. Please ensure your API key has the necessary permissions.');
         } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
-          throw new Error('API rate limit exceeded. Please wait a moment and try again.');
+          throw new Error('⏱️ Rate limit reached (15 requests/min max). Please wait 30-60 seconds. This is NOT a quota issue!');
         }
       }
 
