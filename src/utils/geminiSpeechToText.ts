@@ -14,7 +14,7 @@ class RequestThrottler {
   private queue: Array<() => Promise<any>> = [];
   private processing: boolean = false;
   private lastRequestTime: number = 0;
-  private readonly minDelayMs: number = 5000; // 5 seconds between requests (safer than 4s for 15 RPM limit)
+  private readonly minDelayMs: number = 10000; // 10 seconds between requests to avoid rate limits
   private readonly maxRetries: number = 3;
 
   async enqueue<T>(request: () => Promise<T>): Promise<T> {
@@ -102,6 +102,8 @@ const throttler = new RequestThrottler();
 
 export class GeminiSpeechToText {
   private model: any;
+  private isProcessing: boolean = false;
+  private isEnhancing: boolean = false;
 
   constructor() {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
@@ -121,6 +123,14 @@ export class GeminiSpeechToText {
   }
 
   async transcribeAudio(audioBlob: Blob): Promise<TranscriptionResult> {
+    // Prevent multiple simultaneous transcriptions
+    if (this.isProcessing) {
+      console.warn('⚠️ Transcription already in progress. Ignoring duplicate request.');
+      throw new Error('A transcription is already in progress. Please wait for it to complete.');
+    }
+
+    this.isProcessing = true;
+
     try {
       // Check file size limit (20MB = 20 * 1024 * 1024 bytes)
       const maxSize = 20 * 1024 * 1024; // 20MB
@@ -207,15 +217,26 @@ Audio format: ${audioBlob.type}`;
         } else if (error.message.includes('Request payload size exceeds')) {
           throw new Error('Audio file too large. Please try a shorter recording (max 20MB).');
         } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
-          throw new Error('⏱️ Rate limit reached (15 requests/min max). Please wait 30-60 seconds before trying again. This is NOT a quota issue - just wait a bit!');
+          throw new Error('⏱️ Rate limit reached. Multiple requests detected - please wait 60 seconds and try again.');
         }
       }
 
       throw new Error(`Transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      // Always release the lock
+      this.isProcessing = false;
     }
   }
 
   async enhanceText(text: string): Promise<string> {
+    // Prevent multiple simultaneous enhancements
+    if (this.isEnhancing) {
+      console.warn('⚠️ Text enhancement already in progress. Ignoring duplicate request.');
+      throw new Error('A text enhancement is already in progress. Please wait for it to complete.');
+    }
+
+    this.isEnhancing = true;
+
     try {
       if (!text.trim()) {
         throw new Error('No text provided to enhance');
@@ -264,6 +285,9 @@ Audio format: ${audioBlob.type}`;
       }
 
       throw new Error(`Text enhancement failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      // Always release the lock
+      this.isEnhancing = false;
     }
   }
 
