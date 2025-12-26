@@ -14,7 +14,7 @@ class RequestThrottler {
   private queue: Array<() => Promise<any>> = [];
   private processing: boolean = false;
   private lastRequestTime: number = 0;
-  private readonly minDelayMs: number = 10000; // 10 seconds between requests to avoid rate limits
+  private readonly minDelayMs: number = 5000; // 5 seconds between requests (safer than 4s minimum for 15 req/min)
   private readonly maxRetries: number = 3;
 
   async enqueue<T>(request: () => Promise<T>): Promise<T> {
@@ -48,10 +48,10 @@ class RequestThrottler {
           error?.message?.includes('RESOURCE_EXHAUSTED');
 
         if (is429Error && attempt < this.maxRetries - 1) {
-          // Exponential backoff: 10s, 30s, 60s (longer delays for rate limits)
-          const waitTime = attempt === 0 ? 10000 : attempt === 1 ? 30000 : 60000;
+          // Exponential backoff: 15s, 30s, 60s (longer delays for rate limits)
+          const waitTime = attempt === 0 ? 15000 : attempt === 1 ? 30000 : 60000;
           console.log(`⚠️ Rate limit hit (429). Waiting ${waitTime / 1000}s before retry... (Attempt ${attempt + 1}/${this.maxRetries})`);
-          console.log(`💡 Tip: The free tier allows 15 requests per minute. Please wait between operations.`);
+          console.log(`💡 Tip: Free tier = 15 requests/minute. Wait at least 5 seconds between operations.`);
           await this.delay(waitTime);
         } else if (!is429Error) {
           // If it's not a rate limit error, don't retry
@@ -112,7 +112,7 @@ export class GeminiSpeechToText {
     }
 
     this.model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash-lite",
       generationConfig: {
         temperature: 0.1,
         topK: 1,
@@ -216,8 +216,8 @@ Audio format: ${audioBlob.type}`;
           throw new Error('Audio format not supported or corrupted. Please try recording again.');
         } else if (error.message.includes('Request payload size exceeds')) {
           throw new Error('Audio file too large. Please try a shorter recording (max 20MB).');
-        } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
-          throw new Error('⏱️ Rate limit reached. Multiple requests detected - please wait 60 seconds and try again.');
+        } else if (error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('429')) {
+          throw new Error('⏱️ Rate limit reached! Please wait 10-15 seconds before trying again. (Free tier: 15 requests/minute)');
         }
       }
 
@@ -279,8 +279,8 @@ Audio format: ${audioBlob.type}`;
           throw new Error('API quota exceeded. Please check your Gemini API usage limits.');
         } else if (error.message.includes('PERMISSION_DENIED')) {
           throw new Error('Permission denied. Please ensure your API key has the necessary permissions.');
-        } else if (error.message.includes('RESOURCE_EXHAUSTED')) {
-          throw new Error('⏱️ Rate limit reached (15 requests/min max). Please wait 30-60 seconds. This is NOT a quota issue!');
+        } else if (error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('429')) {
+          throw new Error('⏱️ Rate limit reached! Please wait 10-15 seconds before trying again. (Free tier: 15 requests/minute)');
         }
       }
 
